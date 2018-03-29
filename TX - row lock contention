@@ -1,3 +1,5 @@
+http://www.cnblogs.com/jyzhao/p/8628184.html
+
 Create m_ash table:
 
 create table m_ash20180322 as select * from dba_hist_active_sess_history where dbid=&dbid;
