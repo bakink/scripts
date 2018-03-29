@@ -1,0 +1,24 @@
+select t.dbid,
+       t.sample_id,
+       t.sample_time,
+       t.instance_number,
+       t.event,
+       t.session_state,
+       t.c session_count
+  from (select t.*,
+               rank() over(partition by dbid, instance_number, sample_time order by c desc) r
+          from (select /*+ parallel 8 */
+                 t.*,
+                 count(*) over(partition by dbid, instance_number, sample_time, event) c,
+                 row_number() over(partition by dbid, instance_number, sample_time, event order by 1) r1
+                  from dba_hist_active_sess_history t
+                where sample_time >
+                    to_timestamp('2018-03-22 09:59:00',
+                                 'yyyy-mm-dd hh24:mi:ss')
+                and sample_time <
+                    to_timestamp('2018-03-22 10:00:00',
+                                 'yyyy-mm-dd hh24:mi:ss')
+                ) t
+         where r1 = 1) t
+ where r < 3
+ order by dbid, instance_number, sample_time, r;
