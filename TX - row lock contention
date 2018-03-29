@@ -1,3 +1,13 @@
+Create m_ash table:
+
+create table m_ash20180322 as select * from dba_hist_active_sess_history where dbid=&dbid;
+
+select to_char(sample_time, 'yyyy-mm-dd hh24:mi'), count(1)
+  FROM m_ash20180322
+ group by to_char(sample_time, 'yyyy-mm-dd hh24:mi')
+ order by 1;
+
+--Determine the top n event for each sample point.
 select t.dbid,
        t.sample_id,
        t.sample_time,
@@ -22,3 +32,89 @@ select t.dbid,
          where r1 = 1) t
  where r < 3
  order by dbid, instance_number, sample_time, r;
+
+--Determine the final top holder
+
+select 
+ level                     lv,
+ connect_by_isleaf         isleaf,
+ connect_by_iscycle        iscycle,
+ t.dbid,
+ t.sample_id,
+ t.sample_time,
+ t.instance_number,
+ t.session_id,
+ t.sql_id,
+ t.session_type,
+ t.event,
+ t.session_state,
+ t.blocking_inst_id,
+ t.blocking_session,
+ t.blocking_session_status
+  from m_ash20180322 t
+where sample_time >
+    to_timestamp('2018-03-22 09:59:00',
+                 'yyyy-mm-dd hh24:mi:ss')
+and sample_time <
+    to_timestamp('2018-03-22 10:00:00',
+                 'yyyy-mm-dd hh24:mi:ss')
+ start with blocking_session is not null
+connect by nocycle
+ prior dbid = dbid
+       and prior sample_time = sample_time
+          /*and ((prior sample_time) - sample_time between interval '-1'
+          second and interval '1' second)*/
+       and prior blocking_inst_id = instance_number
+       and prior blocking_session = session_id
+       and prior blocking_session_serial# = session_serial#
+ order siblings by dbid, sample_time;
+ 
+--For further screening, find the top holder with isleaf=1:
+--top holder:
+ select t.lv,
+       t.iscycle,
+       t.dbid,
+       t.sample_id,
+       t.sample_time,
+       t.instance_number,
+       t.session_id,
+       t.sql_id,
+       t.session_type,
+       t.event,
+       t.seq#,
+       t.session_state,
+       t.blocking_inst_id,
+       t.blocking_session,
+       t.blocking_session_status,
+       t.c blocking_session_count
+  from (select t.*,
+               row_number() over(partition by dbid, instance_number, sample_time order by c desc) r
+          from (select t.*,
+                       count(*) over(partition by dbid, instance_number, sample_time, session_id) c,
+                       row_number() over(partition by dbid, instance_number, sample_time, session_id order by 1) r1
+                  from (select /*+ parallel 8 */
+                         level              lv,
+                         connect_by_isleaf  isleaf,
+                         connect_by_iscycle iscycle,
+                         t.*
+                          from m_ash20180322 t
+                        where sample_time >
+                            to_timestamp('2018-03-22 09:59:00',
+                                         'yyyy-mm-dd hh24:mi:ss')
+                        and sample_time <
+                            to_timestamp('2018-03-22 10:00:00',
+                                         'yyyy-mm-dd hh24:mi:ss')
+                         start with blocking_session is not null
+                        connect by nocycle
+                         prior dbid = dbid
+                               and prior sample_time = sample_time
+                                  /*and ((prior sample_time) - sample_time between interval '-1'
+                                  second and interval '1' second)*/
+                               and prior blocking_inst_id = instance_number
+                               and prior blocking_session = session_id
+                               and prior
+                                    blocking_session_serial# = session_serial#) t
+                 where t.isleaf = 1) t
+         where r1 = 1) t
+ where r < 3
+ order by dbid, sample_time, r; 
